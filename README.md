@@ -8,11 +8,10 @@
 - **godotenv**: Loads environment variables from a `.env` file.  
 - **gofiber/websocket/v2**: Used to implement WebSocket connections for real-time ad updates.  
 
-## 🔧 Environment Variables  
+## Environment Variables  
 
 | Variable      | Description |
 |--------------|-------------|
-
 | `DB_PORT`    | Port where the database container is running. |
 | `DB_HOST`    | Database container name (use `localhost` for local connection). |
 | `DB_USER`    | Database connection username. |
