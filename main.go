@@ -7,9 +7,11 @@ import (
 	"math/rand"
 	"net/http"
 	"os"
+	"time"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/cors"
+	"github.com/gofiber/websocket/v2"
 	"github.com/joho/godotenv"
 	_ "github.com/lib/pq"
 )
@@ -42,6 +44,18 @@ type ClickData struct {
 	Position  AdPosition `json:"position"`
 	HoverTime float64    `json:"hoverTime"`
 }
+
+type WSClient struct {
+	conn *websocket.Conn
+	ads  chan Ad
+}
+
+var (
+	clients    = make(map[*websocket.Conn]*WSClient)
+	register   = make(chan *WSClient)
+	unregister = make(chan *WSClient)
+	broadcast  = make(chan Ad)
+)
 
 var db *sql.DB
 var config Config
@@ -82,10 +96,85 @@ func main() {
 	app := fiber.New()
 	app.Use(cors.New())
 
-	app.Get("/ads", getAds)
+	app.Use("/ws", func(c *fiber.Ctx) error {
+		if websocket.IsWebSocketUpgrade(c) {
+			return c.Next()
+		}
+		return fiber.ErrUpgradeRequired
+	})
+
+	app.Get("/ws/ads", websocket.New(handleWebSocket))
 	app.Post("/ads/click", logAdClick)
 
+	go handleConnections()
+	go broadcastAds()
+
 	log.Fatal(app.Listen(config.APP_PORT))
+}
+
+func handleWebSocket(c *websocket.Conn) {
+	client := &WSClient{
+		conn: c,
+		ads:  make(chan Ad),
+	}
+	log.Printf("New WebSocket client connected from: %s", c.RemoteAddr().String())
+	register <- client
+	log.Printf("Client registered: %s", c.RemoteAddr().String())
+
+	defer func() {
+		log.Printf("Client disconnecting: %s", c.RemoteAddr().String())
+		unregister <- client
+		log.Printf("Client unregistered: %s", c.RemoteAddr().String())
+		client.conn.Close()
+		log.Printf("Client connection closed: %s", c.RemoteAddr().String())
+	}()
+
+	for {
+		if err := c.WriteJSON(<-client.ads); err != nil {
+			log.Printf("Error writing to client %s: %v", c.RemoteAddr().String(), err)
+			break
+		}
+		log.Printf("Successfully sent ad to client: %s", c.RemoteAddr().String())
+	}
+}
+
+func handleConnections() {
+	for {
+		select {
+		case client := <-register:
+			clients[client.conn] = client
+		case client := <-unregister:
+			if client, ok := clients[client.conn]; ok {
+				close(client.ads)
+				delete(clients, client.conn)
+			}
+
+		case ad := <-broadcast:
+			for _, client := range clients {
+				select {
+				case client.ads <- ad:
+				default:
+					log.Printf("Failed to send ad to client, channel full")
+				}
+			}
+		}
+	}
+}
+
+func broadcastAds() {
+	ads := []Ad{
+		{1, "https://scontent.fknu2-1.fna.fbcdn.net/v/t39.30808-6/476005818_922314306781136_6981070312990821632_n.jpg?_nc_cat=101&ccb=1-7&_nc_sid=cc71e4&_nc_ohc=EaUSjEMenw0Q7kNvgEfp6ww&_nc_oc=AdjhAOiUvKdnLs3ziCEvH4NBkogUV0RsPN734aFCnpNzzCbGaaamNqnKHdPqJVS6Qx0&_nc_zt=23&_nc_ht=scontent.fknu2-1.fna&_nc_gid=AagEkjoz0MVbn1yVO4UV3ms&oh=00_AYCK-qC5I9IAEn72-HI2imUUhPmMJTfFjcmtbkdiiHwpvg&oe=67AC48A1",
+			"https://www.zeptonow.com/"},
+		{2, "https://www.analyticssteps.com/backend/media/thumbnail/1890055/4828382_1669140152_BlinkitArtboard%201.jpg",
+			"https://www.blinkit.com/"},
+	}
+
+	ticker := time.NewTicker(10 * time.Second)
+	defer ticker.Stop()
+
+	for range ticker.C {
+		broadcast <- ads[rand.Intn(len(ads))]
+	}
 }
 
 func getAds(c *fiber.Ctx) error {
