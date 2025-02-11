@@ -39,3 +39,32 @@
 - Establishes a WebSocket connection with the client.  
 - Sends a random ad to the client every 10 seconds.  
 
+
+### Running the server
+
+```bash
+go run main.go
+```
+
+### Production Build with Docker
+
+```bash
+docker network create ad-service-network
+docker build -t ad-service .
+
+docker run -d --name postgres --network ad-service-network ^
+-e POSTGRES_USER=username ^
+-e POSTGRES_PASSWORD=password ^
+-e POSTGRES_DB=ads ^
+postgres:latest
+
+docker run -d --name ad-service --network ad-service-network -p 8080:8080 ^
+-e DB_HOST=postgres ^
+-e DB_USER=username ^
+-e DB_PASSWORD=password ^
+-e DB_NAME=ads ^
+-e DB_PORT=5432 ^
+ad-service
+```
+
+
